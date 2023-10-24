@@ -959,7 +959,7 @@ create_density_plots(transformed_mn)# NA por Mediaana y OTL sin tratar
 create_density_plots(transformed_mn_mn)# NA por Mediana y OTL minimo
 create_density_plots(transformed_mn_mx)# NA por Mediana y OTL maximo
 ```
-###QQPLOT CONTINUAS----------------------------
+###QQPLOT CONTINUAS (no es bivariado)----------------------------
 ```{r}
 # Función para crear gráficos QQ para variables numéricas (excluyendo las tres primeras variables)
 create_qq_plots <- function(data) {
