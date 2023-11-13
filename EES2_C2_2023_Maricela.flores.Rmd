@@ -19,7 +19,7 @@ datos = read.csv("D:/ECONOMETRIA/US_Accidents_March23.csv")
 ##filtro por estado
 filtro1 = datos[datos$State == "OR",]
 ##filtro para columbia
-filtro2 = filtro1[filtro1$County == "Columbia",]
+filtro2 = filtro1[filtro1$County %in% c("Columbia", "Clatsop", "Washington"), ]
 ##seleccion de variables a usar
 data <- data.frame(ID = filtro2$ID,
                    severity = filtro2$Severity,
@@ -48,25 +48,63 @@ suma_dupli = sum(dupli)
 suma_dupli
 
 ##NA
-##NA PP a 0
+##NA de precipitacion se cambia por la media de la catgoria de condicion meteorologica
 # Crear una tabla de resumen de la cantidad de NA en 'precipitación' por categoría de 'cond_meteo'
 tabla_resumen <- data %>%
   group_by(cond_meteo) %>%
   summarise(NA_count = sum(is.na(precipitacion)))
 # Mostrar la tabla de resumen
 print(tabla_resumen)
-data$precipitacion <- replace(data$precipitacion, is.na(data$precipitacion), 0)
 
-####
-# Calcular la moda de la variable categórica
-moda <- function(x) {
-  uniq_x <- unique(x)
-  uniq_x[which.max(tabulate(match(x, uniq_x)))]
+##FUNCION PARA CAMBIAR NA POR LA MEDIA POR CATEGORIA DE CONDICION METEOROLOGICA
+imputar_precipitacion <- function(datos, categoria) {
+  # Calcula la media de 'precipitacion' para la categoría especificada
+  media_categoria <- mean(datos$precipitacion[datos$cond_meteo == categoria], na.rm = TRUE)
+  # Reemplaza los NA en 'precipitacion' con la media de la categoría
+  datos$precipitacion <- ifelse(is.na(datos$precipitacion) & datos$cond_meteo == categoria, media_categoria, datos$precipitacion)
+  return(datos)
 }
 
+# Uso de la función para imputar 'precipitacion' para las diferentes categorías
+data <- imputar_precipitacion(data, "Light Drizzle")
+data <- imputar_precipitacion(data, "Drizzle")
+data <- imputar_precipitacion(data, "Clear")
+data <- imputar_precipitacion(data, "Fog")
+data <- imputar_precipitacion(data, "Haze")
+data <- imputar_precipitacion(data, "Light Freezing Fog")
+data <- imputar_precipitacion(data, "Light Freezing Rain")
+data <- imputar_precipitacion(data, "Heavy Rain")
+data <- imputar_precipitacion(data, "Light Rain")
+data <- imputar_precipitacion(data, "Light Snow")
+data <- imputar_precipitacion(data, "Mist")
+data <- imputar_precipitacion(data, "Mostly Cloudy")
+data <- imputar_precipitacion(data, "Overcast")
+data <- imputar_precipitacion(data, "Partly Cloudy")
+data <- imputar_precipitacion(data, "Patches of Fog")
+data <- imputar_precipitacion(data, "Rain")
+data <- imputar_precipitacion(data, "Scattered Clouds")
+data <- imputar_precipitacion(data, "Shallow Fog")
+data <- imputar_precipitacion(data, "Smoke")
+data <- imputar_precipitacion(data, "Snow")
+data <- imputar_precipitacion(data, "Thunderstorm")
+
+##Revision NA
+tabla_resumen <- data %>%
+  group_by(cond_meteo) %>%
+  summarise(NA_count = sum(is.na(precipitacion)))
+# Mostrar la tabla de resumen
+print(tabla_resumen)
+
+####
+# Calcular la moda de la variable cond_meteo
+# Calcular la tabla de frecuencias
+tabla_frecuencias <- table(data$cond_meteo)
+# Encontrar la moda
+moda <- names(tabla_frecuencias[tabla_frecuencias == max(tabla_frecuencias)])
+moda
 # Reemplazar NA por la moda
-moda_valor <- moda(data$cond_meteo)
-data$cond_meteo[is.na(data$cond_meteo)] <- moda_valor
+data$cond_meteo[data$cond_meteo == ""] <- moda
+data <- imputar_precipitacion(data, moda)
 
 ####
 #Obtener hora del dia del accidente
@@ -1080,34 +1118,35 @@ categ_3 <- data_frame(ID = categ_3$ID, stop_true = categ_3$stop_True)
 ###MAPPING
 ```{r}
 # Definir el mapeo "cond_meteo"
-mapeo <- c("Clear" = 2,
-           "Cloudy" = 1,
-           "Cloudy / Windy" = 1,
-           "Fair" = 2,
-           "Fog" = 1,
-           "Haze" = 1,
-           "Heavy Rain" = 3,
-           "Snow" = 4,
-           "T-Storm" = 3,
-           "Thunder in the Vicinity" = 3,
-           "Light Freezing Fog" = 1,
-           "Light Rain" = "3",
-           "Light Rain / Windy" = 3,
-           "Light Snow" = 4,
-           "Mostly Cloudy" = 1,
-           "N/A Precipitation" = 1,
-           "Overcast" = 1,
-           "Partly Cloudy" = 1,
-           "Rain" = 2,
-           "Scattered Clouds" = 1,
-           "Wintry Mix" = 1)
+mapeo <- c("Blowing Dust"	=5,		"Blowing Dust / Windy"	=5,			"Blowing Snow / Windy" =4 ,	
+           "Clear"=1,			"Cloudy"=2,			"Cloudy / Windy"=2,		"Drizzle"	=3,		"Drizzle / Windy"	=3,
+           "Fair"	=1,"Fair / Windy"	=1,			"Fog"	=5,"Fog / Windy"	=5,		"Freezing Rain / Windy"	=3,
+           "Funnel Cloud"	=5,		"Hail"	=3,		"Haze"	=5,		"Haze / Windy"	=5,		"Heavy Drizzle"	=3,
+           "Heavy Rain"	=3,"Heavy Rain / Windy"	=3,	"Heavy Snow"	=4,		"Heavy Snow / Windy"	=4,
+           "Heavy T-Storm"	=6,	"Heavy T-Storm / Windy"	=6,	"Light Drizzle"	=3,		"Light Drizzle / Windy"	=3,	
+           "Light Freezing Drizzle"	=3,	"Light Freezing Fog"	=5,	"Light Freezing Rain"	=3,"Light Freezing Rain / Windy"	=3,	
+           "Light Rain"	=3,		"Light Rain / Windy"	=3,"Light Rain with Thunder"	=3,"Light Sleet / Windy"	=3,	
+           "Light Snow"	=4,	"Light Snow / Windy"	=4,"Light Snow and Sleet"	=4,"Light Snow and Sleet / Windy"	=4,
+           "Light Thunderstorms and Rain"	=6,"Mist"	=5,		"Mostly Cloudy"	=2,	"Mostly Cloudy / Windy"	=2,
+           "N/A Precipitation"	=2,		"Overcast"	=2,			"Partly Cloudy"	=2,		"Partly Cloudy / Windy"	=2,
+           "Patches of Fog"	=5,			"Rain"	=3,	"Rain / Windy"	=3,"Scattered Clouds"	=1,	"Shallow Fog"	=5,
+           "Small Hail"	=3,"Smoke"	=5,	"Smoke / Windy"	=5,"Snow"	=4,		"Snow / Windy"	=4,"Squalls"	=5,
+           "T-Storm"	=6,"T-Storm / Windy"	=6,"Thunder"	=6,		"Thunder / Windy"	=6,"Thunder in the Vicinity"	=6,
+           "Thunderstorm"	=6,	"Widespread Dust / Windy"	=5,"Wintry Mix"	=2,"Wintry Mix / Windy"	=2)
 
 # Realizar el mapeo y reemplazar los valores en el campo
 map <- categoricas %>%
   mutate(cond_meteo = ifelse(cond_meteo %in% names(mapeo), mapeo[cond_meteo], cond_meteo))
 
 map$cond_meteo <- as.numeric(map$cond_meteo)
-
+# Crear las nuevas variables binarias
+map <- map %>% 
+  mutate(despejado = as.numeric(map$cond_meteo == 1),
+         nublado = as.numeric(map$cond_meteo == 2),
+         lluvia = as.numeric(map$cond_meteo == 3),
+         nieve = as.numeric(map$cond_meteo == 4),
+         niebla_polvo = as.numeric(map$cond_meteo == 5),
+         tormenta = as.numeric(map$cond_meteo == 6))
 
 # Definir el mapeo variable "hour_of_day"
 mapeo1 <- c("0" = "0",
@@ -1140,10 +1179,12 @@ map <- map %>%
   mutate(hour_of_day = ifelse(hour_of_day %in% names(mapeo1), mapeo1[hour_of_day], hour_of_day))
 
 map$hour_of_day <- as.numeric(map$hour_of_day)
-# Almacenar unicamente varibles codificadas de condicion climatica, hora del dia y ID
-map <- data.frame(ID = map$ID,
-                  hour_of_day = map$hour_of_day,
-                   cond_meteo = map$cond_meteo)
+# Crear las nuevas variables binarias
+map <- map %>% 
+  mutate(madrugada = as.numeric(map$hour_of_day == 0),
+         dia = as.numeric(map$hour_of_day == 1),
+         tarde = as.numeric(map$hour_of_day == 2),
+         noche = as.numeric(map$hour_of_day == 3))
 
 #Union de data procedente de hot encoding y mapping
 categ_uni <- merge(map, categ_1, by="ID", all=FALSE)
@@ -1151,8 +1192,16 @@ categ_uni <- merge(categ_uni, categ_2, by="ID", all=FALSE)
 categ_uni <- merge(categ_uni, categ_3, by="ID", all=FALSE)
 #Eliminar variables categoricas de la union anterior
 categ_uni <- data_frame(ID = categ_uni$ID, 
-                        hour_of_day = categ_uni$hour_of_day, 
-                        cond_meteo = categ_uni$cond_meteo,
+                        madrugada = categ_uni$madrugada, 
+                        dia = categ_uni$dia,
+                        tarde = categ_uni$tarde,
+                        noche = categ_uni$noche,
+                        nublado = categ_uni$nublado,
+                        despejado = categ_uni$despejado,
+                        lluvia = categ_uni$lluvia,
+                        nieve = categ_uni$nieve,
+                        niebla_polvo = categ_uni$niebla_polvo,
+                        tormenta = categ_uni$tormenta,
                         crossing_true = categ_uni$crossing_true,
                         stop_true = categ_uni$stop_true,
                         give_way_true = categ_uni$give_way_true)
@@ -1182,11 +1231,5 @@ crear_heatmap_correlacion <- function(matriz_correlacion, titulo = "Heatmap de C
 
 # Correlacion de variables dependiente y independientes continuas y categoricas codificadasomite el campo ID
 matriz_correlacion <- cor(data_posible[, -1])
-crear_heatmap_correlacion(matriz_correlacion, "Heatmap de Correlación dependiente v/s independientes")
-
-# Crear la matriz de correlación excluyendo los valores NA
-matriz_correlacion <- cor(data_posible[, -1], use = "pairwise.complete.obs")
-
-# Crear el heatmap de correlación con la matriz resultante
 crear_heatmap_correlacion(matriz_correlacion, "Heatmap de Correlación dependiente v/s independientes")
 ```
