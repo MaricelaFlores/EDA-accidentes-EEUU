@@ -1,0 +1,627 @@
+##INTALACION LIBRERIAS 
+```{r}
+# Cargar la librerias
+install.packages("ggplot2")
+install.packages("lubridate")
+install.packages("dplyr")
+install.packages("vcd")
+install.packages("reshape")
+install.packages("leaflet")
+install.packages("caTools")
+install.packages("ROCR")
+install.packages("caret")
+install.packages("pROC")
+install.packages("smbinning")
+install.packages("zoom")
+install.packages("spdep")
+install.packages("classInt")
+install.packages("RColorBrewer")
+install.packages("tmap")
+install.packages("maptools")
+library(spgwr)
+library(zoom)
+library(spdep)
+library(classInt) 
+library(RColorBrewer)
+library(tmap)
+library(smbinning)
+library(pROC)
+library(ROCR)
+library(caret)
+library(caTools)
+library(dplyr)
+library(vcd)
+library(ggplot2)
+library(reshape)
+library(leaflet)
+library(lubridate)
+```
+##CARGAR DATOS
+```{r}
+##Cargar datos
+datos = read.csv("C:/ECONOMETRIA/US_Accidents_March23.csv")
+##filtro por estado
+filtro1 = datos[datos$State == "OR",]
+##filtro para columbia
+filtro2 = filtro1[filtro1$County == "Washington",]
+#filtro2 = filtro1[filtro1$County %in% c("Columbia", "Clatsop", "Washington"), ]
+##seleccion de variables a usar
+data <- data.frame(ID = filtro2$ID,
+                   severity = filtro2$Severity,
+                   latitud = filtro2$Start_Lat,
+                   longitud = filtro2$Start_Lng,
+                   precipitacion = filtro2$Precipitation.in.,
+                   distancia = filtro2$Distance.mi.,
+                   hora_inicio = filtro2$Start_Time,
+                   condado = filtro2$County,
+                   visibilidad = filtro2$Visibility.mi.,
+                   velocidad_viento = filtro2$Wind_Speed.mph.,
+                   cond_meteo = filtro2$Weather_Condition,
+                   crossing = filtro2$Crossing,
+                   give_way = filtro2$Give_Way,
+                   stop = filtro2$Stop)
+```
+##SUMARY-DUPLICADOS-NA-------------------------
+```{r}
+##SUMARY
+summary(data)
+
+##Analisis de Duplicados
+dupli = duplicated(data)
+suma_dupli = sum(dupli)
+suma_dupli
+
+##NA
+##NA de precipitacion se cambia por la media de la catgoria de condicion meteorologica
+# Crear una tabla de resumen de la cantidad de NA en 'precipitación' por categoría de 'cond_meteo'
+tabla_resumen <- data %>%
+  group_by(cond_meteo) %>%
+  summarise(NA_count = sum(is.na(precipitacion)))
+# Mostrar la tabla de resumen
+print(tabla_resumen)
+
+##FUNCION PARA CAMBIAR NA POR LA MEDIA POR CATEGORIA DE CONDICION METEOROLOGICA
+imputar_precipitacion <- function(datos, categoria) {
+  # Calcula la media de 'precipitacion' para la categoría especificada
+  media_categoria <- mean(datos$precipitacion[datos$cond_meteo == categoria], na.rm = TRUE)
+  # Reemplaza los NA en 'precipitacion' con la media de la categoría
+  datos$precipitacion <- ifelse(is.na(datos$precipitacion) & datos$cond_meteo == categoria, media_categoria, datos$precipitacion)
+  return(datos)
+}
+
+# Uso de la función para imputar 'precipitacion' para las diferentes categorías
+data <- imputar_precipitacion(data, "Light Drizzle")
+data <- imputar_precipitacion(data, "Drizzle")
+data <- imputar_precipitacion(data, "Clear")
+data <- imputar_precipitacion(data, "Fog")
+data <- imputar_precipitacion(data, "Haze")
+data <- imputar_precipitacion(data, "Light Freezing Fog")
+data <- imputar_precipitacion(data, "Light Freezing Rain")
+data <- imputar_precipitacion(data, "Heavy Rain")
+data <- imputar_precipitacion(data, "Light Rain")
+data <- imputar_precipitacion(data, "Light Snow")
+data <- imputar_precipitacion(data, "Mist")
+data <- imputar_precipitacion(data, "Mostly Cloudy")
+data <- imputar_precipitacion(data, "Overcast")
+data <- imputar_precipitacion(data, "Partly Cloudy")
+data <- imputar_precipitacion(data, "Patches of Fog")
+data <- imputar_precipitacion(data, "Rain")
+data <- imputar_precipitacion(data, "Scattered Clouds")
+data <- imputar_precipitacion(data, "Shallow Fog")
+data <- imputar_precipitacion(data, "Smoke")
+data <- imputar_precipitacion(data, "Snow")
+data <- imputar_precipitacion(data, "Thunderstorm")
+
+##Revision NA
+tabla_resumen <- data %>%
+  group_by(cond_meteo) %>%
+  summarise(NA_count = sum(is.na(precipitacion)))
+# Mostrar la tabla de resumen
+print(tabla_resumen)
+
+####
+# Calcular la moda de la variable cond_meteo
+# Calcular la tabla de frecuencias
+tabla_frecuencias <- table(data$cond_meteo)
+# Encontrar la moda
+moda <- names(tabla_frecuencias[tabla_frecuencias == max(tabla_frecuencias)])
+moda
+# Reemplazar NA por la moda
+data$cond_meteo[data$cond_meteo == ""] <- moda
+data <- imputar_precipitacion(data, moda)
+####
+#Obtener hora del dia del accidente
+data$hour_of_day <- hour(data$hora_inicio)
+categoricas <- data[,c("ID","severity","cond_meteo","crossing","give_way","stop","hour_of_day")]
+##SEPARACION VAR CONTINUAS
+continuas <- data[,c("ID","severity","latitud","longitud","precipitacion","distancia","visibilidad","velocidad_viento")]
+##NA POR MEDIA
+# Calcular la media de las columnas con NA y reemplazar los NA con la media
+for (col in colnames(continuas)) {
+  if (any(is.na(continuas[, col]))) {
+    col_mean <- mean(continuas[, col], na.rm = TRUE)
+    continuas[is.na(continuas[, col]), col] <- col_mean
+  }
+}
+```
+###OTL
+```{r}
+# Función para reemplazar outliers por estadísticos
+replace_outliers_with_statistic <- function(x, method = "median", threshold = 2) {
+  q1 <- quantile(x, 0.25, na.rm = TRUE)
+  q3 <- quantile(x, 0.75, na.rm = TRUE)
+  iqr <- q3 - q1
+  lower_limit <- q1 - threshold * iqr
+  upper_limit <- q3 + threshold * iqr
+
+  if (method == "min") {
+    x[x < lower_limit] <- min(x, na.rm = TRUE)
+  } else if (method == "max") {
+    x[x > upper_limit] <- max(x, na.rm = TRUE)
+  } else if (method == "median") {
+    x[x < lower_limit] <- median(x, na.rm = TRUE)
+    x[x > upper_limit] <- median(x, na.rm = TRUE)
+  } else if (method == "p25") {
+    x[x < lower_limit] <- quantile(x, 0.25, na.rm = TRUE)
+  } else if (method == "p75") {
+    x[x > upper_limit] <- quantile(x, 0.75, na.rm = TRUE)
+  }
+
+  return(x)
+}
+###mejor correlacion con datos transformados
+variables_a_procesar <- colnames(continuas)[6:ncol(continuas)]
+for (var in variables_a_procesar) {
+  continuas[[var]] <- replace_outliers_with_statistic(continuas[[var]], method = "max")
+}
+
+```
+###ESCALAMIENTO
+```{r}
+library(dplyr)
+# Obtener las columnas que deseas escalar (excepto las 4 primeras)
+columnas_a_escalar <- colnames(continuas)[6:ncol(continuas)]
+
+# Escalar las columnas seleccionadas con el método Min-Max
+datos_escala_min_max <- continuas %>%
+  mutate(across(all_of(columnas_a_escalar), ~ (.-min(., na.rm = TRUE)) / (max(., na.rm = TRUE) - min(., na.rm = TRUE))))
+# Mantener las primeras 4 columnas y la última sin cambios
+datos_escala_min_max <- datos_escala_min_max %>%
+  select(1:5, all_of(columnas_a_escalar), ncol(continuas))
+```
+###TRANSFORMACION
+```{r}
+
+# Definir las columnas a transformar 
+columnas_a_transformar <- colnames(datos_escala_min_max)[5:ncol(datos_escala_min_max)]
+
+# Aplicar la transformación log1p a las columnas seleccionadas
+datos_transformados <- datos_escala_min_max
+datos_transformados[, columnas_a_transformar] <- log1p(datos_escala_min_max[, columnas_a_transformar])
+
+```
+### HOT ENCONDIG
+```{r}
+# Función para realizar one-hot encoding
+one_hot_encoding <- function(data, variable) {
+  # Asegurarse de que la variable sea de tipo factor
+  data[[variable]] <- as.factor(data[[variable]])
+  # Realizar one-hot encoding utilizando la función 'model.matrix'
+  one_hot_encoded <- model.matrix(~ data[[variable]] - 1, data = data)
+  # Obtener los nombres de las categorías originales
+  categories <- levels(data[[variable]])
+  # Cambiar los nombres de las columnas generadas
+  colnames(one_hot_encoded) <- paste(variable, categories, sep = "_")
+  # Eliminar la variable categórica original
+  data[[variable]] <- NULL
+  # Combinar el conjunto de datos original con las nuevas columnas one-hot encoded
+  data <- cbind(data, one_hot_encoded)
+  
+  return(data)
+}
+
+# Realizar one-hot encoding en la variable "crossing"
+categ_1 <- one_hot_encoding(categoricas, "crossing")
+# Almacenar unicamente varible con presencia de cruce y ID
+categ_1 <- data.frame(ID = categ_1$ID, crossing_true = categ_1$crossing_True)
+# Realizar one-hot encoding en la variable "give_way"
+categ_2 <- one_hot_encoding(categoricas, "give_way")
+# Almacenar unicamente varible con presencia de ceda el paso y ID
+categ_2 <- data.frame(ID = categ_2$ID, give_way_true = categ_2$give_way_True)
+# Realizar one-hot encoding en la variable "stop"
+categ_3 <- one_hot_encoding(categoricas, "stop")
+# Almacenar unicamente varible con presencia de pare y ID
+categ_3 <- data_frame(ID = categ_3$ID, stop_true = categ_3$stop_True)
+```
+###MAPPING
+```{r}
+# Definir el mapeo "cond_meteo"
+mapeo <- c("Blowing Dust"	=5,		"Blowing Dust / Windy"	=5,			"Blowing Snow / Windy" =4 ,	
+           "Clear"=1,			"Cloudy"=2,			"Cloudy / Windy"=2,		"Drizzle"	=3,		"Drizzle / Windy"	=3,
+           "Fair"	=1,"Fair / Windy"	=1,			"Fog"	=5,"Fog / Windy"	=5,		"Freezing Rain / Windy"	=3,
+           "Funnel Cloud"	=5,		"Hail"	=3,		"Haze"	=5,		"Haze / Windy"	=5,		"Heavy Drizzle"	=3,
+           "Heavy Rain"	=3,"Heavy Rain / Windy"	=3,	"Heavy Snow"	=4,		"Heavy Snow / Windy"	=4,
+           "Heavy T-Storm"	=6,	"Heavy T-Storm / Windy"	=6,	"Light Drizzle"	=3,		"Light Drizzle / Windy"	=3,	
+           "Light Freezing Drizzle"	=3,	"Light Freezing Fog"	=5,	"Light Freezing Rain"	=3,"Light Freezing Rain / Windy"	=3,	
+           "Light Rain"	=3,		"Light Rain / Windy"	=3,"Light Rain with Thunder"	=3,"Light Sleet / Windy"	=3,	
+           "Light Snow"	=4,	"Light Snow / Windy"	=4,"Light Snow and Sleet"	=4,"Light Snow and Sleet / Windy"	=4,
+           "Light Thunderstorms and Rain"	=6,"Mist"	=5,		"Mostly Cloudy"	=2,	"Mostly Cloudy / Windy"	=2,
+           "N/A Precipitation"	=2,		"Overcast"	=2,			"Partly Cloudy"	=2,		"Partly Cloudy / Windy"	=2,
+           "Patches of Fog"	=5,			"Rain"	=3,	"Rain / Windy"	=3,"Scattered Clouds"	=1,	"Shallow Fog"	=5,
+           "Small Hail"	=3,"Smoke"	=5,	"Smoke / Windy"	=5,"Snow"	=4,		"Snow / Windy"	=4,"Squalls"	=5,
+           "T-Storm"	=6,"T-Storm / Windy"	=6,"Thunder"	=6,		"Thunder / Windy"	=6,"Thunder in the Vicinity"	=6,
+           "Thunderstorm"	=6,	"Widespread Dust / Windy"	=5,"Wintry Mix"	=2,"Wintry Mix / Windy"	=2)
+
+# Realizar el mapeo y reemplazar los valores en el campo
+map <- categoricas %>%
+  mutate(cond_meteo = ifelse(cond_meteo %in% names(mapeo), mapeo[cond_meteo], cond_meteo))
+
+map$cond_meteo <- as.numeric(map$cond_meteo)
+# Crear las nuevas variables binarias
+map <- map %>% 
+  mutate(despejado = as.numeric(map$cond_meteo == 1),
+         nublado = as.numeric(map$cond_meteo == 2),
+         lluvia = as.numeric(map$cond_meteo == 3),
+         nieve = as.numeric(map$cond_meteo == 4),
+         niebla_polvo = as.numeric(map$cond_meteo == 5),
+         tormenta = as.numeric(map$cond_meteo == 6))
+
+# Definir el mapeo variable "hour_of_day"
+mapeo1 <- c("0" = "0",
+           "1" = "0",
+           "2" = "0",
+           "3" = "0",
+           "4" = "0",
+           "5" = "0",
+           "6" = "1",
+           "7" = "1",
+           "8" = "1",
+           "9" = "1",
+           "10" = "1",
+           "11" = "1",
+           "12" = "2",
+           "13" = "2",
+           "14" = "2",
+           "15" = "2",
+           "16" = "2",
+           "17" = "2",
+           "18" = "2",
+           "19" = "2",
+           "20" = "2",
+           "21" = "3",
+           "22" = "3",
+           "23" = "3")
+
+# Realizar el mapeo y reemplazar los valores en el campo
+map <- map %>%
+  mutate(hour_of_day = ifelse(hour_of_day %in% names(mapeo1), mapeo1[hour_of_day], hour_of_day))
+
+map$hour_of_day <- as.numeric(map$hour_of_day)
+# Crear las nuevas variables binarias
+map <- map %>% 
+  mutate(madrugada = as.numeric(map$hour_of_day == 0),
+         dia = as.numeric(map$hour_of_day == 1),
+         tarde = as.numeric(map$hour_of_day == 2),
+         noche = as.numeric(map$hour_of_day == 3))
+
+#Union de data procedente de hot encoding y mapping
+categ_uni <- merge(map, categ_1, by="ID", all=FALSE)
+categ_uni <- merge(categ_uni, categ_2, by="ID", all=FALSE)
+categ_uni <- merge(categ_uni, categ_3, by="ID", all=FALSE)
+#Eliminar variables categoricas de la union anterior
+categ_uni <- data_frame(ID = categ_uni$ID, 
+                        madrugada = categ_uni$madrugada, 
+                        dia = categ_uni$dia,
+                        tarde = categ_uni$tarde,
+                        noche = categ_uni$noche,
+                        nublado = categ_uni$nublado,
+                        despejado = categ_uni$despejado,
+                        lluvia = categ_uni$lluvia,
+                        nieve = categ_uni$nieve,
+                        niebla_polvo = categ_uni$niebla_polvo,
+                        tormenta = categ_uni$tormenta,
+                        crossing_true = categ_uni$crossing_true,
+                        stop_true = categ_uni$stop_true,
+                        give_way_true = categ_uni$give_way_true)
+```
+##binning
+```{r}
+continuas_1 <- datos_transformados
+continuas_1$severity <- ifelse(continuas_1$severity %in% c(3,4), 1, 0)
+vis_bin <- smbinning(df = continuas_1, y = "severity", x = "visibilidad", p = 0.05)
+dis_bin <- smbinning(df = continuas_1, y = "severity", x = "distancia", p = 0.05)
+pre_bin <- smbinning(df = continuas_1, y = "severity", x = "precipitacion", p = 0.05)
+vel_bin <- smbinning(df = continuas_1, y = "severity", x = "velocidad_viento", p = 0.05)
+vis_bin
+datos_transformados$vis_bin <- cut(continuas_1$vis, breaks = vis_bin$bands, labels = c(0, 1), include.lowest = TRUE)
+columns_to_remove <- c("visibilidad")
+# Eliminar las columnas especificadas
+datos_transformados <- datos_transformados[, !(names(datos_transformados) %in% columns_to_remove)]
+
+```
+##UNION MEJOR CORRELACION CONTINUAS Y CATEGORICAS TRATADAS
+```{r}
+##union de variables categoricas codificadas y continuas
+datas <- merge(categ_uni, datos_transformados, by="ID", all=FALSE)
+# Función para crear un heatmap de correlación
+crear_heatmap_correlacion <- function(matriz_correlacion, titulo = "Heatmap de Correlación") {
+  # Convertir la matriz de correlación en un formato adecuado para ggplot
+  cor_matrix_melted <- melt(matriz_correlacion)
+  # Crear el heatmap utilizando ggplot2
+  ggplot(cor_matrix_melted, aes(X1, X2, fill = value)) +
+    geom_tile() +
+    geom_text(aes(label = round(value, 2)), color = "black", size = 4) +
+    scale_fill_gradient2(low = "#11AAAA", mid = 'white', high = "red") +
+    labs(title = titulo) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+      axis.text.y = element_text(vjust = 0.5),
+      plot.title = element_text(hjust = 0.5)
+    )
+}
+# Correlacion de variables continuas y categoricas codificadas omite el campo ID
+matriz_correlacion <- cor(datas[, -1])
+crear_heatmap_correlacion(matriz_correlacion, "Heatmap de Correlación dependiente v/s independientes")
+```
+##PARTICION DATOS DE ENTRENAMIENTO Y PRUEBA DEL MODELO
+```{r}
+##PARTICION DE DATOS
+set.seed(123)  # Establecer una semilla 
+split <- sample.split(datas$severity, SplitRatio = 0.7) 
+entrenamiento <- subset(datas, split == TRUE)#datos de entrenamiento
+prueba <- subset(datas, split == FALSE)#datos prueba
+```
+##DUPLICAR DATOS
+```{r}
+###GRAFICO DE PORCENTAJES POR CATEGORIA 
+frecuencias <- table(entrenamiento$severity)# Calcular las frecuencias
+porcentajes <- prop.table(frecuencias) * 100# Calcular porcentajes
+resultados <- data.frame(Categoria = names(frecuencias), Frecuencia = as.numeric(frecuencias), Porcentaje = porcentajes)
+# Crear el gráfico de barras
+ggplot(resultados, aes(x = order(resultados$Categoria), y = resultados$Porcentaje.Freq, fill = resultados$Categoria)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = sprintf("%.1f%%", resultados$Porcentaje.Freq)), vjust = -0.5) +
+  labs(x = "Categorías", y = "Porcentaje (%)", title = "Gráfico de Barras Acumulado con Frecuencias") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+
+##DUPLICAR
+duplicar_categoria <- function(df, categoria) {
+  datos <- df  # Copia el data frame original para no modificarlo
+  max_obs <- max(table(datos$severity)) #maxima observacion de la data
+  #duplicar hasta que llegue a la misma cantidad de datos de la variable de mayor observaciones
+  while (table(datos$severity)[categoria] < max_obs) {
+    indice_aleatorio <- sample(which(datos$severity == categoria), 1)
+    nueva_fila <- datos[indice_aleatorio, ]
+    datos <- rbind(datos, nueva_fila)
+  }
+  
+  return(datos)
+}
+entrenamiento_1<- entrenamiento
+# Llama a la función y la categoría a duplicar
+entrenamiento_1 <- duplicar_categoria(entrenamiento_1, 1)#duplica datos categoria 1
+entrenamiento_1 <- duplicar_categoria(entrenamiento_1, 3)#duplica datos categoria 3
+entrenamiento_1 <- duplicar_categoria(entrenamiento_1, 4)#duplica datos categoria 4
+
+```
+##MODELO LINEAL MANUAL
+```{r}
+formula_4 = "severity ~ precipitacion + vis_bin + velocidad_viento + distancia + despejado  + lluvia + nieve +  tormenta + crossing_true  + give_way_true + dia + tarde + noche -1"
+modelo_lm_4 <- lm(formula_4, data= entrenamiento_1)
+summary(modelo_lm_4)
+plot(modelo_lm_4)
+# Gráfico de residuos vs. valores predichos
+residuals <- resid(modelo_lm_4)
+plot(fitted(modelo_lm_4), residuals, main="Gráfico de Residuos vs. Predicciones", xlab="Predicciones", ylab="Residuos")
+
+# Gráfico de dispersión de predicciones vs. valores reales
+nuevas_predicciones <- predict(modelo_lm_4, newdata = prueba)
+plot(prueba$severity, nuevas_predicciones, main="Gráfico de Predicciones vs. Valores Reales", xlab="Valores Reales", ylab="Predicciones")
+```
+##RESIDUOS MODELO LINEAL
+```{r}
+# Obtener los residuos como un vector
+residuals <- residuals(modelo_lm_4)
+map.resids <- data.frame(entrenamiento_1, residuals)
+
+# Crear un objeto sf (Simple Features) para el mapeo
+sf_map <- st_as_sf(map.resids, coords = c("longitud", "latitud"), crs = 4326)
+
+# Mapear los residuos con leaflet
+pal <- colorQuantile("OrRd", domain = residuals)
+
+leaflet() %>%
+  addTiles() %>%
+  addCircles(data = sf_map, color = ~pal(residuals), radius = 10, fillOpacity = 0.8) %>%
+  addLegend(pal = pal, values = residuals, title = "Residuals", position = "bottomright")
+```
+##MORAN RESIDUOS LINEAL
+```{r}
+k_vecinos <- 4
+nN <- knearneigh(data.frame(x = entrenamiento_1$longitud, y = entrenamiento_1$latitud), k = k_vecinos)
+# Convierte los resultados en un objeto de vecindad
+w1 <- knn2nb(nN)
+residuos <- residuals(modelo_lm_4)
+# Calcular el índice de Moran para los residuos
+lw.point <- nb2listw(w1, style = "W", zero.policy = TRUE)
+moran(x = residuos, 
+      listw = lw.point,
+      n = length(w1),
+      Szero(lw.point))[1]
+indice_moran <- moran.test(residuos, lw.point)
+moran.test(residuos,lw.point)
+moran.mc = moran.mc(residuos, lw.point, nsim=999)
+plot(moran.mc)
+```
+###MATRIZ DE PESOS
+```{r}
+# Encuentra los k vecinos más cercanos para cada punto
+k_vecinos <- 2
+nN <- knearneigh(data.frame(x = entrenamiento$longitud, y = entrenamiento$latitud), k = k_vecinos)
+# Convierte los resultados en un objeto de vecindad
+w <- knn2nb(nN)
+# Configura los márgenes del gráfico
+par(mar = c(0, 0, 0, 0))
+spdf <- st_as_sf(entrenamiento, coords = c("longitud","latitud"), crs =4326)
+# Grafica tus puntos
+plot(entrenamiento$longitud, entrenamiento$latitud, pch = 20, col = "blue")
+plot(w,spdf$geometry)
+```
+###INDICE DE MORAN VAR OBJETIVO
+```{r}
+###Calcular el índice de Moran para variabe objetivo
+lw.point = nb2listw(w, style="W", zero.policy=TRUE)
+moran(x = entrenamiento$severity, 
+      listw = lw.point,
+      n = length(w), 
+      Szero(lw.point))[1]
+moran.test(entrenamiento$severity,lw.point)
+moran.mc = moran.mc(entrenamiento$severity, lw.point, nsim=999)
+plot(moran.mc)
+```
+##ANCHO DE BANDA
+```{r}
+spdf <- st_as_sf(entrenamiento, coords = c("longitud","latitud"), crs =4326)
+bw = gwr.sel(formula=formula_4, as_Spatial(spdf), adapt = T,RMSE=T)
+bw = 0.03394789
+```
+##GWR
+```{r}
+bw = 0.03394789
+spdf <- st_as_sf(entrenamiento, coords = c("longitud","latitud"), crs =4326)
+model_gwr=gwr(formula_4, as_Spatial(spdf), adapt = bw,fit.points = as_Spatial(spdf))
+model_gwr
+coef_data = data.frame(model_gwr$SDF)
+coef_spdf <- st_as_sf(coef_data, coords = c(19,20), crs =4326)
+#names(coef_spdf)
+plot(coef_spdf[,c('distancia')])
+plot(coef_spdf[,c('precipitacion')])
+plot(coef_spdf[,c('vis_bin1')])
+plot(coef_spdf[,c('despejado')])
+plot(coef_spdf[,c('give_way_true')])
+plot(coef_spdf[,c("crossing_true")])
+plot(coef_spdf[,c('velocidad_viento')])
+plot(coef_spdf[,c('tormenta')])
+plot(coef_spdf[,c("tarde")])
+plot(coef_spdf[,c("noche")])
+plot(coef_spdf[,c('nieve')])
+plot(coef_spdf[,c("dia")])
+plot(coef_spdf[,c('lluvia')])
+plot(coef_spdf[,c('pred')])
+plot(coef_spdf[,c('stop_true')])
+plot(coef_spdf[,c('localR2')])
+```
+###INDICE DE MORAN RESIDUOS GWR
+```{r}
+# Calcular el índice de Moran para los residuos
+spdf=SpatialPointsDataFrame(coords=entrenamiento[,c(17,16)],data=entrenamiento)
+coordenadas2 <- coordinates(spdf)
+vec2 =knn2nb(knearneigh(coordenadas2, longlat= NULL))
+W2 <- nb2listw(vec2) 
+spdf$resid_gwr = model_gwr$lm$residuals
+gwrMoranTest <- moran.test(spdf$resid_gwr,W2)
+gwrMoranTest
+```
+###MAPEAR RESIDUOS GWR
+```{r}
+spplot(spdf, "resid_gwr",at=seq(min(spdf$resid_gwr,na.rm=TRUE),
+                                max(spdf$resid_gwr,na.rm=TRUE),
+                                length=20),
+       col.regions = rev(brewer.pal(4,"Spectral")))
+```
+##CASOS IDONEIDAD
+```{r}
+# Definir los intervalos para la reclasificación de variable precipitacion
+intervalos <- quantile(coef_spdf$precipitacion, probs = c(0, 0.25, 0.7, 0.85, 1))
+# Realizar la reclasificación
+coef_spdf$grupo_prec <- cut(coef_spdf$precipitacion, breaks = intervalos, labels = FALSE)
+# VISIBILIDAD
+intervalos <- quantile(coef_spdf$vis_bin0, probs = c(0, 0.25, 0.7, 0.85, 1))
+coef_spdf$grupo_vis0 <- cut(coef_spdf$vis_bin0, breaks = intervalos, labels = FALSE)
+# VISIBILIDAD1
+intervalos <- quantile(coef_spdf$vis_bin1, probs = c(0, 0.25, 0.7, 0.85, 1))
+coef_spdf$grupo_vis1 <- cut(coef_spdf$vis_bin1, breaks = intervalos, labels = FALSE)
+# VELOCIDAD DEL VIENTO
+intervalos <- quantile(coef_spdf$velocidad_viento, probs = c(0, 0.25, 0.7, 0.85, 1))
+coef_spdf$grupo_vel <- cut(coef_spdf$velocidad_viento, breaks = intervalos, labels = FALSE)
+# distancia0
+intervalos <- quantile(coef_spdf$distancia, probs = c(0, 0.25, 0.7, 0.85, 1))
+coef_spdf$grupo_dis <- cut(coef_spdf$distancia, breaks = intervalos, labels = FALSE)
+# DESPEJADO
+intervalos <- quantile(coef_spdf$despejado, probs = c(0, 0.25, 0.7, 0.85, 1))
+coef_spdf$grupo_desp <- cut(coef_spdf$despejado, breaks = intervalos, labels = FALSE)
+# LLUVIA
+intervalos <- quantile(coef_spdf$lluvia, probs = c(0, 0.25, 0.7, 0.85, 1))
+coef_spdf$grupo_lluv <- cut(coef_spdf$lluvia, breaks = intervalos, labels = FALSE)
+# NIEVE
+intervalos <- quantile(coef_spdf$nieve, probs = c(0, 0.25, 0.7, 0.85, 1))
+coef_spdf$grupo_nie <- cut(coef_spdf$nieve, breaks = intervalos, labels = FALSE)
+# TORMENTA
+intervalos <- quantile(coef_spdf$tormenta, probs = c(0, 0.25, 0.7, 0.85, 1))
+coef_spdf$grupo_tor <- cut(coef_spdf$tormenta, breaks = intervalos, labels = FALSE)
+# CROSSING
+intervalos <- quantile(coef_spdf$crossing_true, probs = c(0, 0.25, 0.7, 0.85, 1))
+coef_spdf$grupo_cros <- cut(coef_spdf$crossing_true, breaks = intervalos, labels = FALSE)
+# GIVE WAY
+intervalos <- quantile(coef_spdf$give_way_true, probs = c(0, 0.25, 0.7, 0.85, 1))
+coef_spdf$grupo_give <- cut(coef_spdf$give_way_true, breaks = intervalos, labels = FALSE)
+# DIA
+intervalos <- quantile(coef_spdf$dia, probs = c(0, 0.25, 0.7, 0.85, 1))
+coef_spdf$grupo_dia <- cut(coef_spdf$dia, breaks = intervalos, labels = FALSE)
+# NOCHE
+intervalos <- quantile(coef_spdf$noche, probs = c(0, 0.25, 0.7, 0.85, 1))
+coef_spdf$grupo_noc <- cut(coef_spdf$noche, breaks = intervalos, labels = FALSE)
+# TARDE
+intervalos <- quantile(coef_spdf$tarde, probs = c(0, 0.25, 0.7, 0.85, 1))
+coef_spdf$grupo_tar <- cut(coef_spdf$tarde, breaks = intervalos, labels = FALSE)
+
+
+##SUMA DE LOS GRUPOS
+coef_spdf <- coef_spdf %>%
+  mutate(suma_grupos = grupo_prec + grupo_dis + grupo_vis1 + grupo_vel + grupo_desp + grupo_lluv + grupo_tor + grupo_nie + grupo_cros + grupo_give + grupo_dia + grupo_noc + grupo_tar)
+
+# Cambiar el valor a 0 si no es igual a 4, 8, 9 o 12
+coef_spdf$suma_grupos <- ifelse(coef_spdf$suma_grupos %in% c(22, 29, 42, 33), coef_spdf$suma_grupos, 0)
+
+##ETIQUETAS IDONEO Y NO IDONEO
+coef_spdf$suma_grupos_etiqueta <- case_when(
+  coef_spdf$grupo_prec == 4 | coef_spdf$grupo_prec == 3 
+  & coef_spdf$grupo_vis1 == 1 | coef_spdf$grupo_vis1 == 2 
+  & coef_spdf$grupo_vel == 4 | coef_spdf$grupo_vel == 3 
+  & coef_spdf$grupo_dis == 4 | coef_spdf$grupo_dis == 3
+  & coef_spdf$grupo_desp == 1 | coef_spdf$grupo_desp == 2 
+  & coef_spdf$grupo_lluv == 4 | coef_spdf$grupo_lluv == 3
+  & coef_spdf$grupo_nie == 4 | coef_spdf$grupo_nie == 3
+  & coef_spdf$grupo_tor == 4 | coef_spdf$grupo_tor == 3
+  & coef_spdf$grupo_cros == 4 | coef_spdf$grupo_cros == 3
+  & coef_spdf$grupo_give == 4 | coef_spdf$grupo_give == 3
+  & coef_spdf$grupo_dia == 1 | coef_spdf$grupo_dia == 2 
+  & coef_spdf$grupo_noc == 4 | coef_spdf$grupo_noc == 3
+  & coef_spdf$grupo_tar == 4 | coef_spdf$grupo_tar == 3 ~ "Grave",
+  coef_spdf$grupo_prec == 1 | coef_spdf$grupo_prec == 2 
+  & coef_spdf$grupo_vis1 == 4 | coef_spdf$grupo_vis1 == 3 
+  & coef_spdf$grupo_vel == 1 | coef_spdf$grupo_vel == 2 
+  & coef_spdf$grupo_dis == 1 | coef_spdf$grupo_dis == 2
+  & coef_spdf$grupo_desp == 4 | coef_spdf$grupo_desp == 3 
+  & coef_spdf$grupo_lluv == 1 | coef_spdf$grupo_lluv == 2
+  & coef_spdf$grupo_nie == 1 | coef_spdf$grupo_nie == 2
+  & coef_spdf$grupo_tor == 1 | coef_spdf$grupo_tor == 2
+  & coef_spdf$grupo_cros == 1 | coef_spdf$grupo_cros == 2
+  & coef_spdf$grupo_give == 1 | coef_spdf$grupo_give == 2
+  & coef_spdf$grupo_dia == 4 | coef_spdf$grupo_dia == 3 
+  & coef_spdf$grupo_noc == 1 | coef_spdf$grupo_noc == 2
+  & coef_spdf$grupo_tar == 1 | coef_spdf$grupo_tar == 2 ~ "Leve",
+  TRUE ~ "No Idoneo"
+)
+plot(coef_spdf[, c('suma_grupos_etiqueta')])
+coef_spdf$idoneidad <- case_when(
+   coef_spdf$suma_grupos_etiqueta == "Grave" & coef_spdf$pred >= 2.5~ "id grave",
+   coef_spdf$suma_grupos_etiqueta == "Leve" & coef_spdf$pred < 2.5 ~ "id leve",
+  TRUE ~ "No Idoneo"
+)
+plot(coef_spdf[, c('idoneidad')])
+```
+
